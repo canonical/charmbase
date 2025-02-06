@@ -32,7 +32,6 @@ import ops._tracing.buffer
 import ops.jujucontext
 import ops.log
 
-logger = logging.getLogger(__name__)
 # Trace `urllib` usage when talking to Pebble
 URLLibInstrumentor().instrument()
 
@@ -77,9 +76,7 @@ class ProxySpanExporter(SpanExporter):
             assert spans  # the BatchSpanProcessor won't call us if there's no data
             # TODO:  this will change in the JSON experiment
             data: bytes = trace_encoder.encode_spans(spans).SerializePartialToString()
-            logging.debug(f'FIXME export {len(spans)=} {len(data)=}')
             rv = self.buffer.pump(data)
-            logging.debug('FIXME saved')
             assert rv
             self.do_export(*rv)
 
@@ -94,10 +91,8 @@ class ProxySpanExporter(SpanExporter):
 
     def do_export(self, buffered_id: int, data: bytes) -> None:
         """Export buffered data and remove it from the buffer on success."""
-        logging.debug(f'FIXME asked {buffered_id=} {len(data)=}')
         # TODO:  this will change in the JSON experiment
         if self.real_exporter and self.real_exporter._export(data).ok:
-            logging.debug('FIXME removing')
             self.buffer.remove(buffered_id)
 
     def shutdown(self) -> None:
@@ -155,7 +150,6 @@ def setup_tracing(charm_class_name: str) -> None:
     _exporter = ProxySpanExporter(buffer_path)
     span_processor = BatchSpanProcessor(_exporter)
     provider.add_span_processor(span_processor)
-    logging.debug('FIXME setup_tracing')
     set_tracer_provider(provider)
 
 
@@ -191,5 +185,4 @@ def set_tracing_destination(
 
 def shutdown_tracing() -> None:
     """Shutdown tracing, which is expected to flush the buffered data out."""
-    logging.debug('FIXME shutdown tracing')
     get_tracer_provider().shutdown()  # type: ignore
