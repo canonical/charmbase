@@ -41,6 +41,7 @@ LONG_DB_TIMEOUT = 3600
 # Must use isolation_level=None for consistency between Python 3.8 and 3.12
 # Can't use the STRICT keyword for tables, requires sqlite 3.37.0
 # Can't use the octet_length() either, requires sqlite 3.43.0
+# Can't use DELETE ... RETURNING, requires sqlite 3.35.0
 #
 # Ubuntu 20.04  Python  3.8.2  Sqlite 3.31.1  Adds UPSERT, window functions
 # Ubuntu 22.04  Python 3.10.x  Sqlite 3.37.2  Adds STRICT tables, JSON ops
@@ -80,6 +81,7 @@ class Buffer:
     """tracing data ids buffered during this dispatch invocation."""
     observed = False
     """Marks that data from this dispatch invocation has been marked observed."""
+    stored: int|None = None
 
     def __init__(self, path: str):
         self.path = path
@@ -165,19 +167,17 @@ class Buffer:
         # - or a read transaction later upgraded to write (check space, then delete some)
         # currently I've made `self.tx()` return a write transaction always
         # which is safer, but may incur a filesystem modification cost.
+        collected_size = 0
+        chunklen = 0
         with self.tx(readonly=not chunk) as conn:
             if chunk:
                 # Ensure that there's enough space in the buffer
                 chunklen = (len(chunk) + 4095) // 4096 * 4096
-                stored: int | None = conn.execute(
-                    """
-                    SELECT sum((length(data)+4095)/4096*4096)
-                    FROM tracing
-                    """
-                ).fetchone()[0]
+
                 # TODO: expose `stored` in metrics, one day
-                excess = (stored or 0) + chunklen - BUFFER_SIZE
-                logging.debug(f'{excess=}')
+                if self.stored is None:
+                    self.stored = self._stored_size(conn)
+                excess = self.stored + chunklen - BUFFER_SIZE
 
                 if excess > 0:
                     # Drop lower-priority, older data
@@ -190,7 +190,6 @@ class Buffer:
                     )
 
                     collected_ids: set[int] = set()
-                    collected_size: int = 0
                     for id_, size in cursor:
                         collected_ids.add(id_)
                         collected_size += size
@@ -198,7 +197,6 @@ class Buffer:
                             break
 
                     assert collected_ids
-                    logging.debug(f'{len(collected_ids)=}')
                     conn.execute(
                         f"""
                         DELETE FROM tracing
@@ -222,7 +220,7 @@ class Buffer:
                     self.ids.add(cursor.lastrowid)
 
             # Return oldest important data
-            return conn.execute(
+            rv = conn.execute(
                 """
                 SELECT id, data
                 FROM tracing
@@ -231,9 +229,35 @@ class Buffer:
                 """
             ).fetchone()
 
+        assert self.stored is not None
+        self.stored += chunklen - collected_size
+        return rv
+
+    def _stored_size(self, conn: sqlite3.Connection) -> int:
+        """Must be called in a transaction."""
+        stored: int | None = conn.execute(
+            """
+            SELECT sum((length(data)+4095)/4096*4096)
+            FROM tracing
+            """
+        ).fetchone()[0]
+        return stored or 0
+
     @retry
-    def remove(self, id_: int):
+    def remove(self, id_: int) -> None:
         with self.tx() as conn:
+            # NOTE: can't use the RETURNING clause
+            row = conn.execute(
+                """
+                SELECT (length(data)+4095)/4096*4096
+                FROM tracing
+                WHERE id = ?
+                """
+            ).fetchone()
+
+            if not row:
+                return
+
             conn.execute(
                 """
                 DELETE FROM tracing
@@ -241,4 +265,7 @@ class Buffer:
                 """,
                 (id_,),
             )
+
         self.ids -= {id_}
+        if self.stored is not None:
+            self.stored -= row[0]
