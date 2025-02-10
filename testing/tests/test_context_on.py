@@ -65,9 +65,14 @@ def test_simple_events(event_name: str, event_kind: typing.Type[ops.EventBase]):
     #   ctx.run(ctx.on.install(), state)
     with ctx(getattr(ctx.on, event_name)(), scenario.State()) as mgr:
         mgr.run()
-        assert len(mgr.charm.observed) == 2
-        assert isinstance(mgr.charm.observed[1], ops.CollectStatusEvent)
-        assert isinstance(mgr.charm.observed[0], event_kind)
+        assert len(mgr.charm.observed) == 3
+        # FIXME: the actual event set depends on ops version
+        # what's the best way to handle that?
+        tracing, main, status = mgr.charm.observed
+        assert isinstance(tracing, ops.SetupTracingEvent)
+        assert isinstance(main, event_kind)
+        # FIXME: I'm not a fan of depending on ops.SomeNewEvent
+        assert isinstance(status, ops.CollectStatusEvent)
 
 
 @pytest.mark.parametrize(
