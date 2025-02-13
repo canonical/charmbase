@@ -40,6 +40,7 @@ from typing import (
     BinaryIO,
     Callable,
     ClassVar,
+    Collection,
     Dict,
     Generator,
     Iterable,
@@ -2497,6 +2498,30 @@ class Container:
         if len(checks) > 1:
             raise RuntimeError(f'expected 1 check, got {len(checks)}')
         return checks[check_name]
+
+    def start_checks(self, *check_names: str) -> Collection[str]:
+        """Start given check(s) by name.
+
+        Returns:
+            A set of check names that were started. Checks that were already
+            running will not be included.
+        """
+        if not check_names:
+            raise TypeError('start-checks expected at least 1 argument, got 0')
+
+        return frozenset(self._pebble.start_checks(check_names))
+
+    def stop_checks(self, *check_names: str) -> Collection[str]:
+        """Stop given check(s) by name.
+
+        Returns:
+            A set of check names that were stopped. Checks that were already
+            inactive will not be included.
+        """
+        if not check_names:
+            raise TypeError('stop-checks expected at least 1 argument, got 0')
+
+        return frozenset(self._pebble.stop_checks(check_names))
 
     @typing.overload
     def pull(self, path: Union[str, PurePath], *, encoding: None) -> BinaryIO: ...
